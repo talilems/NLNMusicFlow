@@ -3,10 +3,18 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(({ mode }) => {
-  // Load env file based on `mode` in the current working directory.
-  // Set the third parameter to '' to load all env regardless of the `VITE_` prefix.
-  // Fix: Cast process to any to resolve TS error "Property 'cwd' does not exist on type 'Process'"
+  // 1. Load env file based on `mode` in the current working directory.
+  // We use (process as any).cwd() to satisfy TypeScript in some environments.
   const env = loadEnv(mode, (process as any).cwd(), '');
+  
+  // 2. Aggressively find the API Key. 
+  // Vercel System variables are in process.env, .env files are in env object.
+  const apiKey = env.VITE_API_KEY || env.API_KEY || process.env.VITE_API_KEY || process.env.API_KEY || '';
+
+  if (mode === 'production' && !apiKey) {
+    console.warn("⚠️ WARNING: API_KEY is missing in the build environment!");
+  }
+
   return {
     plugins: [
       react(),
@@ -36,9 +44,10 @@ export default defineConfig(({ mode }) => {
       })
     ],
     define: {
-      // Robustly polyfill process.env.API_KEY. 
-      // Vercel system variables might be in process.env, while local .env files are in `env`.
-      'process.env.API_KEY': JSON.stringify(env.API_KEY || process.env.API_KEY || '')
+      // 3. Inject the key globaly so it's available in the browser
+      '__GENAI_API_KEY__': JSON.stringify(apiKey),
+      // Fallback for code using process.env
+      'process.env.API_KEY': JSON.stringify(apiKey)
     }
   };
 });

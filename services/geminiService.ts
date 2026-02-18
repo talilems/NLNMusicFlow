@@ -3,8 +3,14 @@ import { ImportResult, SongSearchResult } from "../types";
 
 // Helper to get AI instance safely
 const getAi = () => {
+  // The API key must be obtained exclusively from the environment variable process.env.API_KEY.
+  // We assume this variable is pre-configured by the build tool (Vite define plugin).
   const key = process.env.API_KEY;
-  if (!key) throw new Error("API Key is missing. Please check your Vercel Environment Variables.");
+
+  if (!key) {
+    throw new Error("API Key is missing. Go to Settings -> Environment Variables and ensure 'API_KEY' is set.");
+  }
+  
   return new GoogleGenAI({ apiKey: key });
 };
 
@@ -79,9 +85,9 @@ export const extractSongData = async (
     });
 
     return JSON.parse(response.text!) as ImportResult;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Gemini Extract Error:", error);
-    throw new Error("Failed to process file.");
+    throw new Error(error.message || "Failed to process file.");
   }
 };
 
@@ -113,9 +119,9 @@ export const searchSongs = async (query: string): Promise<SongSearchResult[]> =>
     });
 
     return parseJson(response.text) as SongSearchResult[];
-  } catch (error) {
+  } catch (error: any) {
     console.error("Gemini Search Error:", error);
-    throw new Error("Failed to search for songs.");
+    throw new Error(error.message || "Failed to search for songs.");
   }
 };
 
@@ -143,8 +149,8 @@ export const getSongContent = async (title: string, artist: string): Promise<Imp
     });
 
     return parseJson(response.text) as ImportResult;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Gemini Content Fetch Error:", error);
-    throw new Error("Failed to get song content.");
+    throw new Error(error.message || "Failed to get song content.");
   }
 };
