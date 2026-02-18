@@ -7,7 +7,7 @@ import { SongCard } from './components/SongCard';
 import { PerformView } from './components/PerformView';
 import { 
   Library, ListMusic, Plus, Search, Upload, Loader2, Save, ArrowLeft,
-  Trash2, X, CheckCircle, Edit2, Sparkles, Music, Globe, ExternalLink, ChevronRight
+  Trash2, X, CheckCircle, Edit2, Sparkles, Music, Globe, ExternalLink, ChevronRight, AlertTriangle
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -34,6 +34,7 @@ const App: React.FC = () => {
   const [showAiSearch, setShowAiSearch] = useState(false);
   const [aiSearchQuery, setAiSearchQuery] = useState('');
   const [aiSearchResults, setAiSearchResults] = useState<SongSearchResult[]>([]);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   // --- Song Editor State ---
   const [editorId, setEditorId] = useState<string | null>(null);
@@ -125,13 +126,16 @@ const App: React.FC = () => {
     setIsImporting(true);
     setImportStatus('Searching web for matches...');
     setAiSearchResults([]);
+    setAiError(null);
     
     try {
       const results = await GeminiService.searchSongs(aiSearchQuery);
       setAiSearchResults(results);
-    } catch (error) {
-      alert('Search failed. Please try again or check your API key.');
-      console.error(error);
+    } catch (error: any) {
+      console.error("AI Search Error:", error);
+      const msg = error.message || "Unknown error";
+      setAiError(msg);
+      // alert(`Search failed: ${msg}`); // Removed alert in favor of UI error message
     } finally {
       setIsImporting(false);
     }
@@ -140,6 +144,7 @@ const App: React.FC = () => {
   const selectAiResult = async (result: SongSearchResult) => {
     setIsImporting(true);
     setImportStatus(`Fetching lyrics for "${result.title}"...`);
+    setAiError(null);
     
     try {
       const fullSong = await GeminiService.getSongContent(result.title, result.artist);
@@ -154,8 +159,10 @@ const App: React.FC = () => {
       setAiSearchQuery('');
       setAiSearchResults([]);
       setView(ViewState.EDITOR);
-    } catch (error) {
-      alert('Failed to get song content.');
+    } catch (error: any) {
+      console.error("AI Content Error:", error);
+      const msg = error.message || "Failed to get content";
+      setAiError(msg);
     } finally {
       setIsImporting(false);
     }
@@ -256,7 +263,7 @@ const App: React.FC = () => {
             <p className="text-slate-400 text-sm">{songs.length} songs</p>
           </div>
           <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-             <button onClick={() => setShowAiSearch(true)} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-90 text-white px-4 py-2.5 rounded-lg font-medium transition-all shadow-lg shadow-purple-900/20">
+             <button onClick={() => { setShowAiSearch(true); setAiError(null); }} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-90 text-white px-4 py-2.5 rounded-lg font-medium transition-all shadow-lg shadow-purple-900/20">
                <Globe size={18} /> <span className="text-sm">Web Search</span>
              </button>
              <button onClick={() => fileInputRef.current?.click()} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-surface hover:bg-slate-700 text-slate-200 px-4 py-2.5 rounded-lg border border-slate-700 transition-colors">
@@ -462,7 +469,7 @@ const App: React.FC = () => {
                   <div>
                     <h2 className="text-xl font-bold text-white flex items-center gap-2"><Sparkles className="text-purple-400" /> Web Search & Import</h2>
                   </div>
-                  <button onClick={() => { setShowAiSearch(false); setAiSearchResults([]); }} className="text-slate-400 hover:text-white"><X size={20} /></button>
+                  <button onClick={() => { setShowAiSearch(false); setAiSearchResults([]); setAiError(null); }} className="text-slate-400 hover:text-white"><X size={20} /></button>
                </div>
                
                {/* Search Input */}
@@ -484,11 +491,18 @@ const App: React.FC = () => {
                             Search
                         </button>
                    </div>
+                   {/* Error Display */}
+                   {aiError && (
+                      <div className="mt-2 bg-red-900/30 border border-red-800 text-red-200 text-sm p-3 rounded-lg flex items-center gap-2">
+                        <AlertTriangle size={16} />
+                        <span className="flex-1">{aiError}</span>
+                      </div>
+                   )}
                </div>
 
                {/* Results List */}
                <div className="flex-1 overflow-y-auto px-6 py-2 space-y-2 mt-2">
-                   {aiSearchResults.length === 0 && !isImporting && (
+                   {aiSearchResults.length === 0 && !isImporting && !aiError && (
                        <div className="text-center text-slate-500 py-8">
                            <p>Enter a song name to find lyrics & chords.</p>
                        </div>

@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(({ mode }) => {
+  // Load env file based on `mode` in the current working directory.
+  // Set the third parameter to '' to load all env regardless of the `VITE_` prefix.
+  // Fix: Cast process to any to resolve TS error "Property 'cwd' does not exist on type 'Process'"
   const env = loadEnv(mode, (process as any).cwd(), '');
   return {
     plugins: [
@@ -33,8 +36,9 @@ export default defineConfig(({ mode }) => {
       })
     ],
     define: {
-      // Polyfill process.env.API_KEY so the existing service code works
-      'process.env.API_KEY': JSON.stringify(env.API_KEY)
+      // Robustly polyfill process.env.API_KEY. 
+      // Vercel system variables might be in process.env, while local .env files are in `env`.
+      'process.env.API_KEY': JSON.stringify(env.API_KEY || process.env.API_KEY || '')
     }
   };
 });
