@@ -1,0 +1,21 @@
+{
+  "short_name": "ChordFlow",
+  "name": "ChordFlow Setlist Manager",
+  "icons": [
+    {
+      "src": "https://cdn.lucide.dev/music.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://cdn.lucide.dev/music.svg",
+      "type": "image/svg+xml",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#0f172a",
+  "background_color": "#0f172a",
+  "orientation": "portrait"
+}
