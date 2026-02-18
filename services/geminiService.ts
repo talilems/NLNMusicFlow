@@ -8,6 +8,30 @@ const getAi = () => {
   return new GoogleGenAI({ apiKey: key });
 };
 
+// Helper to safely parse JSON from AI response (which might contain Markdown)
+const parseJson = (text: string | undefined): any => {
+  if (!text) throw new Error("No response from AI");
+  
+  // Remove markdown code blocks (```json ... ```)
+  const cleaned = text.replace(/```json/g, '').replace(/```/g, '');
+  
+  // Find the first '{' or '[' and the last '}' or ']'
+  const firstOpen = cleaned.search(/(\{|\[)/);
+  const lastClose = cleaned.search(/(\}|\])[^}\]]*$/); // simplistic find last
+
+  if (firstOpen !== -1 && lastClose !== -1) {
+     const jsonStr = cleaned.substring(firstOpen, lastClose + 1);
+     try {
+       return JSON.parse(jsonStr);
+     } catch (e) {
+       console.error("JSON Parse failed", e);
+       throw new Error("AI returned invalid JSON format");
+     }
+  }
+  throw new Error("Could not find structured data in AI response");
+};
+
+// 1. File Import (No Search Tool) -> Safe to use Strict Schema
 export const extractSongData = async (
   fileBase64: string | null,
   mimeType: string | null,
@@ -33,7 +57,7 @@ export const extractSongData = async (
   parts.push({ text: prompt });
   if (textInput) parts.push({ text: `Additional Text: ${textInput}` });
 
-  // Define schema for strict JSON output
+  // Schema is allowed here because we are NOT using tools
   const responseSchema = {
     type: Type.OBJECT,
     properties: {
@@ -61,83 +85,64 @@ export const extractSongData = async (
   }
 };
 
-/**
- * Step 1: Search for song options
- */
+// 2. Search Songs (Uses Google Search) -> DO NOT use Strict Schema (per guidelines)
 export const searchSongs = async (query: string): Promise<SongSearchResult[]> => {
   const ai = getAi();
   
   const prompt = `
     Search the web for the song: "${query}".
     Find up to 3 distinct matching songs (or popular versions).
-    Return a list containing the Title, Artist, and a very short snippet (e.g. "Key: G, from Album X").
+    
+    RETURN JSON ONLY.
+    Output a JSON array of objects with these properties:
+    - title: string
+    - artist: string
+    - snippet: string (short description, e.g. "Key: G")
+    
+    Example: [{"title": "A", "artist": "B", "snippet": "C"}]
   `;
-
-  const responseSchema = {
-    type: Type.ARRAY,
-    items: {
-      type: Type.OBJECT,
-      properties: {
-        title: { type: Type.STRING },
-        artist: { type: Type.STRING },
-        snippet: { type: Type.STRING }
-      },
-      required: ["title", "artist", "snippet"]
-    }
-  };
 
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: { parts: [{ text: prompt }] },
       config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
-        responseSchema: responseSchema
+        tools: [{ googleSearch: {} }] 
+        // Note: responseMimeType/Schema removed to prevent conflicts with Search Tool
       }
     });
 
-    return JSON.parse(response.text!) as SongSearchResult[];
+    return parseJson(response.text) as SongSearchResult[];
   } catch (error) {
     console.error("Gemini Search Error:", error);
     throw new Error("Failed to search for songs.");
   }
 };
 
-/**
- * Step 2: Get full content for selected song
- */
+// 3. Get Full Content (Uses Google Search) -> DO NOT use Strict Schema
 export const getSongContent = async (title: string, artist: string): Promise<ImportResult> => {
   const ai = getAi();
   
   const prompt = `
     Find the official lyrics and guitar chords for "${title}" by "${artist}".
-    Return the full content formatted with chords.
-    Prefer ChordPro format (e.g. [Am] Amazing [G] Grace) if available, otherwise Chords over lyrics.
+    
+    RETURN JSON ONLY.
+    Output a JSON object with:
+    - title: string
+    - artist: string
+    - content: string (Full lyrics with chords. Prefer ChordPro format [Am] if found.)
   `;
-
-  const responseSchema = {
-    type: Type.OBJECT,
-    properties: {
-      title: { type: Type.STRING },
-      artist: { type: Type.STRING },
-      content: { type: Type.STRING, description: "Full lyrics and chords" }
-    },
-    required: ["title", "artist", "content"]
-  };
 
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: { parts: [{ text: prompt }] },
       config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
-        responseSchema: responseSchema
+        tools: [{ googleSearch: {} }]
       }
     });
 
-    return JSON.parse(response.text!) as ImportResult;
+    return parseJson(response.text) as ImportResult;
   } catch (error) {
     console.error("Gemini Content Fetch Error:", error);
     throw new Error("Failed to get song content.");
