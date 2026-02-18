@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Song, Setlist, ViewState } from './types';
+import { Song, Setlist, ViewState, SongSearchResult } from './types';
 import * as StorageService from './services/storageService';
 import * as AudioStorage from './services/audioStorage';
 import * as GeminiService from './services/geminiService';
@@ -7,7 +7,7 @@ import { SongCard } from './components/SongCard';
 import { PerformView } from './components/PerformView';
 import { 
   Library, ListMusic, Plus, Search, Upload, Loader2, Save, ArrowLeft,
-  Trash2, X, CheckCircle, Edit2, Sparkles, Music, Globe, ExternalLink
+  Trash2, X, CheckCircle, Edit2, Sparkles, Music, Globe, ExternalLink, ChevronRight
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -23,6 +23,7 @@ const App: React.FC = () => {
   // --- UI State ---
   const [searchQuery, setSearchQuery] = useState('');
   const [isImporting, setIsImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState(''); // Text to show during loading
   const [showSongPicker, setShowSongPicker] = useState(false);
   const [showCreateSetlistModal, setShowCreateSetlistModal] = useState(false);
   const [newSetlistName, setNewSetlistName] = useState('');
@@ -32,6 +33,7 @@ const App: React.FC = () => {
   // AI Search State
   const [showAiSearch, setShowAiSearch] = useState(false);
   const [aiSearchQuery, setAiSearchQuery] = useState('');
+  const [aiSearchResults, setAiSearchResults] = useState<SongSearchResult[]>([]);
 
   // --- Song Editor State ---
   const [editorId, setEditorId] = useState<string | null>(null);
@@ -116,23 +118,46 @@ const App: React.FC = () => {
     }
   };
 
-  const handleAiSearch = async () => {
+  // --- NEW AI SEARCH WORKFLOW ---
+  
+  const performAiSearch = async () => {
     if (!aiSearchQuery.trim()) return;
     setIsImporting(true);
-    setShowAiSearch(false);
+    setImportStatus('Searching web for matches...');
+    setAiSearchResults([]);
+    
     try {
-      const result = await GeminiService.findSong(aiSearchQuery);
-      setEditorTitle(result.title);
-      setEditorArtist(result.artist);
-      setEditorContent(result.content);
-      setView(ViewState.EDITOR);
+      const results = await GeminiService.searchSongs(aiSearchQuery);
+      setAiSearchResults(results);
     } catch (error) {
-      alert('Could not find exact song. Opening editor for you to add manually.');
-      setEditorTitle(aiSearchQuery);
-      setView(ViewState.EDITOR);
+      alert('Search failed. Please try again or check your API key.');
+      console.error(error);
     } finally {
       setIsImporting(false);
+    }
+  };
+
+  const selectAiResult = async (result: SongSearchResult) => {
+    setIsImporting(true);
+    setImportStatus(`Fetching lyrics for "${result.title}"...`);
+    
+    try {
+      const fullSong = await GeminiService.getSongContent(result.title, result.artist);
+      
+      // Populate Editor
+      setEditorTitle(fullSong.title);
+      setEditorArtist(fullSong.artist);
+      setEditorContent(fullSong.content);
+      
+      // Close modal and go to editor
+      setShowAiSearch(false);
       setAiSearchQuery('');
+      setAiSearchResults([]);
+      setView(ViewState.EDITOR);
+    } catch (error) {
+      alert('Failed to get song content.');
+    } finally {
+      setIsImporting(false);
     }
   };
 
@@ -142,7 +167,7 @@ const App: React.FC = () => {
   };
 
   // =========================================================================
-  // LOGIC: Setlists (Same as before)
+  // LOGIC: Setlists
   // =========================================================================
 
   const openCreateSetlistModal = () => { setNewSetlistName(''); setShowCreateSetlistModal(true); };
@@ -199,6 +224,7 @@ const App: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
     setIsImporting(true);
+    setImportStatus('Analyzing file...');
     try {
       const reader = new FileReader();
       reader.onload = async () => {
@@ -425,48 +451,70 @@ const App: React.FC = () => {
         {view === ViewState.SETLIST_DETAIL && renderSetlistDetail()}
       </main>
 
-      {/* AI Search Modal */}
+      {/* AI Search & Select Modal */}
       {showAiSearch && (
          <div className="fixed inset-0 z-[70] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-surface w-full max-w-lg rounded-2xl border border-slate-700 p-6 shadow-2xl relative overflow-hidden">
+            <div className="bg-surface w-full max-w-lg rounded-2xl border border-slate-700 shadow-2xl relative overflow-hidden flex flex-col max-h-[80vh]">
                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-purple-500 to-blue-500"></div>
-               <div className="flex justify-between items-start mb-4">
+               
+               {/* Header */}
+               <div className="p-6 pb-2 flex justify-between items-start">
                   <div>
                     <h2 className="text-xl font-bold text-white flex items-center gap-2"><Sparkles className="text-purple-400" /> Web Search & Import</h2>
-                    <p className="text-slate-400 text-sm mt-1">Look up songs from Elevation, Hillsong, etc.</p>
                   </div>
-                  <button onClick={() => setShowAiSearch(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
+                  <button onClick={() => { setShowAiSearch(false); setAiSearchResults([]); }} className="text-slate-400 hover:text-white"><X size={20} /></button>
                </div>
                
-               <input 
-                 autoFocus
-                 value={aiSearchQuery}
-                 onChange={(e) => setAiSearchQuery(e.target.value)}
-                 onKeyDown={(e) => e.key === 'Enter' && handleAiSearch()}
-                 placeholder="e.g. Oceans by Hillsong"
-                 className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 text-lg text-white focus:outline-none focus:border-purple-500 mb-4 shadow-inner"
-               />
+               {/* Search Input */}
+               <div className="px-6 py-2">
+                   <div className="flex gap-2">
+                        <input 
+                            autoFocus
+                            value={aiSearchQuery}
+                            onChange={(e) => setAiSearchQuery(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && performAiSearch()}
+                            placeholder="e.g. Oceans Hillsong"
+                            className="flex-1 bg-slate-900 border border-slate-700 rounded-xl p-4 text-white focus:outline-none focus:border-purple-500 shadow-inner"
+                        />
+                        <button 
+                            onClick={performAiSearch}
+                            disabled={!aiSearchQuery.trim()}
+                            className="bg-purple-600 hover:bg-purple-500 text-white rounded-xl px-4 font-bold disabled:opacity-50"
+                        >
+                            Search
+                        </button>
+                   </div>
+               </div>
 
-               <div className="text-xs text-slate-500 mb-6 bg-slate-800/50 p-3 rounded-lg">
-                  <p className="mb-1"><strong>Auto-Import:</strong> AI will search the web and format lyrics/chords for you.</p>
-                  <p><strong>Or Manual:</strong> Search yourself and copy-paste.</p>
+               {/* Results List */}
+               <div className="flex-1 overflow-y-auto px-6 py-2 space-y-2 mt-2">
+                   {aiSearchResults.length === 0 && !isImporting && (
+                       <div className="text-center text-slate-500 py-8">
+                           <p>Enter a song name to find lyrics & chords.</p>
+                       </div>
+                   )}
+
+                   {aiSearchResults.map((result, idx) => (
+                       <div key={idx} className="bg-slate-800/50 hover:bg-slate-800 border border-slate-700 rounded-lg p-4 flex justify-between items-center group cursor-pointer" onClick={() => selectAiResult(result)}>
+                           <div>
+                               <h3 className="font-bold text-white">{result.title}</h3>
+                               <p className="text-sm text-slate-400">{result.artist}</p>
+                               <p className="text-xs text-slate-500 mt-1">{result.snippet}</p>
+                           </div>
+                           <ChevronRight className="text-purple-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                       </div>
+                   ))}
                </div>
-               
-               <div className="flex justify-end gap-3">
+
+               {/* Footer */}
+               <div className="p-4 bg-slate-900/50 text-center">
                   <button 
                     onClick={() => {
                         window.open(`https://www.google.com/search?q=${encodeURIComponent(aiSearchQuery || 'worship chords lyrics')}`, '_blank');
                     }}
-                    className="px-4 py-2 text-slate-300 hover:text-white flex items-center gap-2 border border-slate-700 rounded-lg hover:bg-slate-800"
+                    className="text-xs text-slate-400 hover:text-white flex items-center justify-center gap-1 w-full"
                   >
-                    <ExternalLink size={16} /> Search Manually
-                  </button>
-                  <button 
-                     onClick={handleAiSearch}
-                     disabled={!aiSearchQuery.trim()}
-                     className="px-6 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-90 disabled:opacity-50 text-white rounded-lg font-medium shadow-lg shadow-purple-900/20"
-                  >
-                     Auto-Import
+                    <ExternalLink size={12} /> Not found? Search Google Manually
                   </button>
                </div>
             </div>
@@ -477,8 +525,8 @@ const App: React.FC = () => {
       {isImporting && (
         <div className="fixed inset-0 z-[80] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center p-4">
           <Loader2 className="animate-spin text-purple-400 mb-4" size={48} />
-          <h3 className="text-xl font-bold text-white mb-2">Searching the Web...</h3>
-          <p className="text-slate-400 text-center max-w-xs">Finding and formatting your song.</p>
+          <h3 className="text-xl font-bold text-white mb-2">Processing...</h3>
+          <p className="text-slate-400 text-center max-w-xs">{importStatus}</p>
         </div>
       )}
 

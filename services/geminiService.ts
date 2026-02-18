@@ -1,16 +1,19 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { ImportResult } from "../types";
+import { ImportResult, SongSearchResult } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Helper to get AI instance safely
+const getAi = () => {
+  const key = process.env.API_KEY;
+  if (!key) throw new Error("API Key is missing. Please check your Vercel Environment Variables.");
+  return new GoogleGenAI({ apiKey: key });
+};
 
 export const extractSongData = async (
   fileBase64: string | null,
   mimeType: string | null,
   textInput: string | null
 ): Promise<ImportResult> => {
-  if (!process.env.API_KEY) throw new Error("API Key is missing.");
-
-  // Use gemini-3-flash-preview for both text and multimodal tasks
+  const ai = getAi();
   const model = 'gemini-3-flash-preview';
   const parts: any[] = [];
 
@@ -25,85 +28,118 @@ export const extractSongData = async (
     Analyze the provided content. Extract the song Title, Artist, and the Lyrics with Chords.
     Format in "ChordPro" style (chords in brackets [C]) OR standard chords-over-lyrics.
     Preserve line breaks.
-    Return JSON.
   `;
 
   parts.push({ text: prompt });
   if (textInput) parts.push({ text: `Additional Text: ${textInput}` });
 
-  return callGemini(model, parts, true); // true = strict JSON schema
+  // Define schema for strict JSON output
+  const responseSchema = {
+    type: Type.OBJECT,
+    properties: {
+      title: { type: Type.STRING },
+      artist: { type: Type.STRING },
+      content: { type: Type.STRING, description: "Song body with chords/lyrics" }
+    },
+    required: ["title", "artist", "content"]
+  };
+
+  try {
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: { parts },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: responseSchema
+      }
+    });
+
+    return JSON.parse(response.text!) as ImportResult;
+  } catch (error) {
+    console.error("Gemini Extract Error:", error);
+    throw new Error("Failed to process file.");
+  }
 };
 
-export const findSong = async (query: string): Promise<ImportResult> => {
-  if (!process.env.API_KEY) throw new Error("API Key is missing.");
+/**
+ * Step 1: Search for song options
+ */
+export const searchSongs = async (query: string): Promise<SongSearchResult[]> => {
+  const ai = getAi();
   
-  // We use Google Search grounding to find "existing" songs rather than generating new ones.
   const prompt = `
-    Search the web for the official lyrics and guitar chords for the song: "${query}".
-    Focus on finding accurate versions from reputable chord sites for artists like Elevation Worship, Hillsong, Phil Wickham, Matt Redman, Sovereign Grace, or Jesus Culture.
-    
-    Output the result as a valid JSON object string (do not use Markdown code blocks) with the following structure:
-    {
-      "title": "Exact Song Title",
-      "artist": "Artist Name",
-      "content": "The full lyrics with chords. Use ChordPro format (e.g. [Am] Amazing [G] Grace) if found, otherwise keep chords above lyrics."
-    }
+    Search the web for the song: "${query}".
+    Find up to 3 distinct matching songs (or popular versions).
+    Return a list containing the Title, Artist, and a very short snippet (e.g. "Key: G, from Album X").
   `;
+
+  const responseSchema = {
+    type: Type.ARRAY,
+    items: {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING },
+        artist: { type: Type.STRING },
+        snippet: { type: Type.STRING }
+      },
+      required: ["title", "artist", "snippet"]
+    }
+  };
 
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: { parts: [{ text: prompt }] },
       config: {
-        tools: [{ googleSearch: {} }], // Enable Web Search
-        // We do NOT use responseMimeType: "application/json" here because Grounding responses can be unpredictable with schema.
-        // We will parse the JSON manually.
+        tools: [{ googleSearch: {} }],
+        responseMimeType: "application/json",
+        responseSchema: responseSchema
       }
     });
 
-    const text = response.text;
-    if (!text) throw new Error("No response from AI");
-    
-    // Extract JSON from the text (it might contain grounding metadata text around it)
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]) as ImportResult;
-    }
-    throw new Error("Could not parse song data from search result.");
-
+    return JSON.parse(response.text!) as SongSearchResult[];
   } catch (error) {
     console.error("Gemini Search Error:", error);
-    throw new Error("Failed to find song on the web.");
+    throw new Error("Failed to search for songs.");
   }
 };
 
-const callGemini = async (model: string, parts: any[], useSchema: boolean): Promise<ImportResult> => {
-  try {
-    const config: any = {};
-    if (useSchema) {
-        config.responseMimeType = "application/json";
-        config.responseSchema = {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            artist: { type: Type.STRING },
-            content: { type: Type.STRING, description: "Song body with chords/lyrics" }
-          },
-          required: ["title", "artist", "content"]
-        };
-    }
+/**
+ * Step 2: Get full content for selected song
+ */
+export const getSongContent = async (title: string, artist: string): Promise<ImportResult> => {
+  const ai = getAi();
+  
+  const prompt = `
+    Find the official lyrics and guitar chords for "${title}" by "${artist}".
+    Return the full content formatted with chords.
+    Prefer ChordPro format (e.g. [Am] Amazing [G] Grace) if available, otherwise Chords over lyrics.
+  `;
 
+  const responseSchema = {
+    type: Type.OBJECT,
+    properties: {
+      title: { type: Type.STRING },
+      artist: { type: Type.STRING },
+      content: { type: Type.STRING, description: "Full lyrics and chords" }
+    },
+    required: ["title", "artist", "content"]
+  };
+
+  try {
     const response = await ai.models.generateContent({
-      model: model,
-      contents: { parts },
-      config: config
+      model: 'gemini-3-flash-preview',
+      contents: { parts: [{ text: prompt }] },
+      config: {
+        tools: [{ googleSearch: {} }],
+        responseMimeType: "application/json",
+        responseSchema: responseSchema
+      }
     });
 
-    const text = response.text;
-    if (!text) throw new Error("No response from AI");
-    return JSON.parse(text) as ImportResult;
+    return JSON.parse(response.text!) as ImportResult;
   } catch (error) {
-    console.error("Gemini Error:", error);
-    throw new Error("Failed to process request.");
+    console.error("Gemini Content Fetch Error:", error);
+    throw new Error("Failed to get song content.");
   }
 };

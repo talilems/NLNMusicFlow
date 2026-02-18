@@ -28,3 +28,9 @@ export interface ImportResult {
   artist: string;
   content: string;
 }
+
+export interface SongSearchResult {
+  title: string;
+  artist: string;
+  snippet: string;
+}
